@@ -10,18 +10,44 @@ import subprocess
 import time
 import threading
 import sys
-import logging
+import configparser
+
 
 #logging.basicConfig(filename='/tmp/dicom_importer.log', level=logging.DEBUG)
 #logging.debug("Programmstart")
-
-# Configuration for destination path
-destination_path = "/Users/sommeru/Downloads/tmp"
 
 # Global variables
 dicom_folder = None
 current_patient_info = None
 
+# Fallback
+destination_path = "/tmp"
+
+# Paths
+home_dir = os.path.expanduser("~")
+home_config_file = os.path.join(home_dir, ".dicom-importer")
+program_dir = os.path.dirname(os.path.abspath(__file__))
+program_config_file = os.path.join(program_dir, ".dicom-importer")  
+
+# Choose the first available config file
+config_file = None
+if os.path.exists(program_config_file):
+    config_file = program_config_file
+    print("Using config file in program dirctory")
+elif os.path.exists(home_config_file):
+    config_file = home_config_file
+    print("Using config file in home dirctory")
+
+# Read the destination path
+if config_file:
+    try:
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        destination_path = config.get("settings", "destination_path", fallback=destination_path)
+    except Exception as e:
+        print(f"Warning: Could not read destination path from {config_file}: {e}")
+
+print(f"Destination path: {destination_path}")
 
 
 # Define main application window and appearance
