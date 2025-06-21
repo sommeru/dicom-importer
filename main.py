@@ -11,10 +11,31 @@ import time
 import threading
 import sys
 import configparser
+import logging
 
 
-#logging.basicConfig(filename='/tmp/dicom_importer.log', level=logging.DEBUG)
-#logging.debug("Programmstart")
+log_file = os.path.join(os.path.expanduser("~"), "dicom-importer.log")
+
+# Logger konfigurieren
+logger = logging.getLogger("dicom_importer")
+logger.setLevel(logging.DEBUG)
+
+# Formatter
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+# FileHandler
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+# StreamHandler (stderr)
+stream_handler = logging.StreamHandler(sys.stderr)
+stream_handler.setLevel(logging.DEBUG)
+stream_handler.setFormatter(formatter)
+
+# add handler to logger
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
 
 # Global variables
 dicom_folder = None
@@ -33,10 +54,10 @@ program_config_file = os.path.join(program_dir, ".dicom-importer")
 config_file = None
 if os.path.exists(program_config_file):
     config_file = program_config_file
-    print("Using config file in program dirctory")
+    logger.info("Using config file in program dirctory")
 elif os.path.exists(home_config_file):
     config_file = home_config_file
-    print("Using config file in home dirctory")
+    logger.info("Using config file in home dirctory")
 
 # Read the destination path
 if config_file:
@@ -45,9 +66,9 @@ if config_file:
         config.read(config_file)
         destination_path = config.get("settings", "destination_path", fallback=destination_path)
     except Exception as e:
-        print(f"Warning: Could not read destination path from {config_file}: {e}")
+        logger.warning(f"Could not read destination path from {config_file}: {e}")
 
-print(f"Destination path: {destination_path}")
+logger.info(f"Destination path: {destination_path}")
 
 
 # Define main application window and appearance
@@ -65,7 +86,9 @@ def resource_path(relative_path):
     return os.path.join(os.path.abspath("."), relative_path)
 
 icon_path = resource_path("icon.png")
+logger.info(f"Icon path: {icon_path}")
 icon_image = tk.PhotoImage(file=icon_path)
+app.iconphoto(True, icon_image)
 
 # Returns disk usage (used, free, total, percent used)
 def get_disk_usage_percent(path):
@@ -74,7 +97,7 @@ def get_disk_usage_percent(path):
         percent_used = int(used / total * 100)
         return used, free, total, percent_used
     except Exception as e:
-        print(f"Error getting disk usage: {e}")
+        logger.error(f"Error getting disk usage: {e}")
         return 0, 0, 0, 0
 
 # Updates the GUI to show available disk space
@@ -101,7 +124,7 @@ def get_folder_size(path):
         size_mb = size_kb // 1024
         return size_mb
     except Exception as e:
-        print(f"Error determining folder size: {e}")
+        logger.error(f"Error determining folder size: {e}")
         return 0.0
 
 # Extracts DICOM metadata (name, DOB, modality, etc.) from folder
@@ -134,7 +157,7 @@ def extract_patient_info_from_folder(folder_path):
                 })
                 readoutcomplete = True
             except Exception as e:
-                print(f"Error reading {file_path}: {e}")
+                logger.error(f"Error reading {file_path}: {e}")
             if readoutcomplete:
                 return patient_info
     messagebox.showwarning("No usable DICOM data found!", "")
@@ -158,23 +181,28 @@ def import_cd():
             if dicom_folder:
                 break
     if dicom_folder and os.path.isdir(dicom_folder):
-        print(f"DICOM folder found: {dicom_folder}")
+        logger.info(f"DICOM folder found: {dicom_folder}")
         infos = extract_patient_info_from_folder(dicom_folder)        
         for info in infos:
             current_patient_info = info
-            print('------------------')
             last_name_entry.delete(0, ctk.END)
             last_name_entry.insert(0, info.get('last', ''))
+            logger.info(f"Nachname: {info.get('last', '')}")          
             first_name_entry.delete(0, ctk.END)
             first_name_entry.insert(0, info.get('first', ''))
+            logger.info(f"Vorname: {info.get('first', '')}")
             dob_entry.delete(0, ctk.END)
             dob_entry.insert(0, info.get('dob', ''))
+            logger.info(f"Geburtsdatum: {info.get('dob', '')}")
             studydate_entry.delete(0, ctk.END)
             studydate_entry.insert(0, info.get('studydate', ''))
+            logger.info(f"Studien-Datum: {info.get('studydate', '')}")
             modality_entry.delete(0, ctk.END)
             modality_entry.insert(0, info.get('modality', ''))
+            logger.info(f"Untersuchungsart: {info.get('modality', '')}")
             cd_path.configure(text=dicom_folder)
             folder_size_label.configure(text=f"{get_folder_size(dicom_folder)} MB")
+            logger.info(f"Ordnergröße: {get_folder_size(dicom_folder)} MB")
     else:
         messagebox.showwarning("Kein DICOM-Ordner", "Es wurde kein 'DICOM'-Verzeichnis gefunden.")
 
@@ -185,6 +213,7 @@ def show_copy_progress(src_folder, dst_folder):
     progress_dialog.grab_set()
 
     label = ctk.CTkLabel(progress_dialog, text="Daten werden kopiert...")
+    logger.info(f"Kopieren von {src_folder} nach {dst_folder}")
     label.pack(pady=(10, 0))
 
     progress_bar = ctk.CTkProgressBar(progress_dialog)
@@ -205,6 +234,7 @@ def show_copy_progress(src_folder, dst_folder):
         cancel_event.set()
         cancel_button.configure(state="disabled")
         label.configure(text="Abbruch wird durchgeführt...")
+        logger.info("Kopieren abgebrochen.")
 
     cancel_button.configure(command=on_cancel)
 
@@ -235,14 +265,14 @@ def show_copy_progress(src_folder, dst_folder):
                                   update_progress(p, m, t))
                         time.sleep(0.02)
                     except Exception as e:
-                        print(f"Fehler beim Kopieren: {e}")
+                        logger.error(f"Fehler beim Kopieren: {e}")
 
             if cancel_event.is_set():
                 app.after(0, lambda: cancel_copy(progress_dialog, dst_folder))
             else:
                 app.after(0, lambda: finish_copy(progress_dialog, dst_folder))
         except Exception as e:
-            print(f"Kopierfehler: {e}")
+            logger.error(f"Kopierfehler: {e}")
 
     def update_progress(progress, mb_copied, mb_total):
         progress_bar.set(progress)
@@ -252,9 +282,9 @@ def show_copy_progress(src_folder, dst_folder):
         try:
             if os.path.exists(path_to_delete):
                 shutil.rmtree(path_to_delete)
-                print(f"Zielordner gelöscht: {path_to_delete}")
+                logger.info(f"Zielordner gelöscht: {path_to_delete}")
         except Exception as e:
-            print(f"Fehler beim Löschen des Zielordners: {e}")
+            logger.error(f"Fehler beim Löschen des Zielordners: {e}")
         dialog.destroy()
         messagebox.showwarning("Abgebrochen", "Kopieren wurde abgebrochen und der Zielordner gelöscht.")
 
@@ -277,13 +307,22 @@ def copy_dicom_folder():
         return
     folder_name = f"{info['studydate']}-{info['dob']}-{info['last']}, {info['first']}-{info['modality']}"
     target_path = os.path.join(destination_path, folder_name)
+
+    # Check if destination is writable
+    if not os.access(destination_path, os.W_OK):
+        messagebox.showerror("Fehler", f"Das Zielverzeichnis ist nicht beschreibbar:\n{destination_path}")
+        logger.error(f"Zielverzeichnis nicht beschreibbar: {destination_path}")
+        return
+
     if os.path.exists(target_path):
         messagebox.showwarning("Ordner existiert", f"Der Zielordner existiert bereits:\n{os.path.basename(target_path)}")
+        logger.warning(f"Zielordner existiert bereits: {target_path}") 
         return
     try:
         show_copy_progress(dicom_folder, target_path)
     except Exception as e:
         messagebox.showerror("Fehler beim Kopieren", str(e))
+        logger.error(f"Fehler beim Kopieren: {e}")
         return
     for entry in [first_name_entry, last_name_entry, dob_entry, studydate_entry, modality_entry]:
         entry.delete(0, ctk.END)
