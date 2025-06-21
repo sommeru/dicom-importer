@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "dicom-importer"
+version = "0.1.0"
+description = "A tool for importing dicom examinations (e.g. from a CD) and store them on a network drive"
+authors = ["Ulrich Sommer <mail@ulrich-sommer.de>"]
+license = "GNU"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.13"
+customtkinter = "^5.2.2"
+pydicom = "^3.0.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
