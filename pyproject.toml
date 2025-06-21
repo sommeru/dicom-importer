@@ -7,9 +7,11 @@ license = "GNU"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.13"
+python = "3.13.*"
 customtkinter = "^5.2.2"
 pydicom = "^3.0.1"
+pyinstaller = "^6.14.1"
+pillow = "^11.2.1"
 
 
 [build-system]

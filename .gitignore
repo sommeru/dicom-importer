@@ -1,0 +1,6 @@
+build/
+dist/
+icon.iconset/
+icon.iconset/
+DICOM-Importer.spec
+.DS_Store
