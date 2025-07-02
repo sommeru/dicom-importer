@@ -57,6 +57,14 @@ pyinstaller --windowed --name "DICOM-Importer" --icon=icon.icns --add-data "icon
 
 The `.app` bundle will be created in the `dist/` folder.
 
+## Install
+Copy APP to destination folder
+
+Create .dicom-importer in home directory
+[settings]
+destination_path = /Volumes/Dicom
+
+
 ## License
 
 GNU3 License. © 2025 J. Ulrich Sommer
