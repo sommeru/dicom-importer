@@ -50,6 +50,9 @@ home_config_file = os.path.join(home_dir, ".dicom-importer")
 program_dir = os.path.dirname(os.path.abspath(__file__))
 program_config_file = os.path.join(program_dir, ".dicom-importer")  
 
+# Starting up
+logger.info("Dicom importer starting...")
+
 # Choose the first available config file
 config_file = None
 if os.path.exists(program_config_file):
@@ -58,13 +61,15 @@ if os.path.exists(program_config_file):
 elif os.path.exists(home_config_file):
     config_file = home_config_file
     logger.info("Using config file in home dirctory")
+else:
+    logger.warning("No config file found, using fallback settings")
 
 # Read the destination path
 if config_file:
     try:
         config = configparser.ConfigParser()
         config.read(config_file)
-        destination_path = config.get("settings", "destination_path", fallback=destination_path)
+        destination_path = config.get("settings", "destination_path", fallback="/tmpp")
     except Exception as e:
         logger.warning(f"Could not read destination path from {config_file}: {e}")
 
