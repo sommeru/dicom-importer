@@ -65,16 +65,91 @@ else:
     logger.warning("No config file found, using fallback settings")
 
 # Read the destination path
+# Read SMB mount configuration
+smb_mount_point = None
+smb_share = None
+smb_user = None
+smb_password = None
+
 if config_file:
     try:
         config = configparser.ConfigParser()
         config.read(config_file)
-        destination_path = config.get("settings", "destination_path", fallback="/tmpp")
+        smb_mount_point = config.get("settings", "smb_mount_point", fallback=None)
+        smb_share = config.get("settings", "smb_share", fallback=None)
+        smb_user = config.get("settings", "smb_user", fallback=None)
+        smb_password = config.get("settings", "smb_password", fallback=None)
+        if smb_mount_point:
+            destination_path = smb_mount_point
+            logger.info(f"SMB mount point set as destination: {destination_path}")
+        else:
+            destination_path = config.get("settings", "destination_path", fallback="/tmp")
     except Exception as e:
-        logger.warning(f"Could not read destination path from {config_file}: {e}")
+        logger.warning(f"Could not read SMB settings from {config_file}: {e}")
 
 logger.info(f"Destination path: {destination_path}")
 
+def is_mount_point_mounted(mount_point):
+    """Check if the mount point is already mounted."""
+    try:
+        with open("/proc/mounts" if os.path.exists("/proc/mounts") else "/etc/mtab") as f:
+            mounts = f.read()
+        return mount_point in mounts
+    except Exception as e:
+        logger.error(f"Error checking mount status: {e}")
+        return False
+
+def mount_smb_share(mount_point, share, user=None, password=None):
+    """Try to mount the SMB share to the mount point."""
+    try:
+        if not os.path.exists(mount_point):
+            os.makedirs(mount_point)
+        # Build the mount command
+        if user and password:
+            # Use the credentials in the mount command
+            cmd = [
+                "mount_smbfs",
+                f"//{user}:{password}@{share}",
+                mount_point
+            ]
+        elif user:
+            cmd = [
+                "mount_smbfs",
+                f"//{user}@{share}",
+                mount_point
+            ]
+        else:
+            cmd = [
+                "mount_smbfs",
+                f"//{share}",
+                mount_point
+            ]
+        logger.info(f"Mounting SMB share with command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode != 0:
+            logger.error(f"Failed to mount SMB share: {result.stderr}")
+            return False
+        logger.info("SMB share mounted successfully.")
+        return True
+    except Exception as e:
+        logger.error(f"Exception while mounting SMB share: {e}")
+        return False
+
+def ensure_smb_mounted():
+    """Ensure the SMB mount point is mounted before proceeding."""
+    if not smb_mount_point or not smb_share:
+        logger.error("SMB mount point or share not configured.")
+        messagebox.showerror("Fehler", "SMB-Mountpoint oder Share ist nicht konfiguriert.")
+        return False
+    if is_mount_point_mounted(smb_mount_point):
+        logger.info("SMB mount point is already mounted.")
+        return True
+    logger.info("SMB mount point not mounted. Attempting to mount...")
+    if mount_smb_share(smb_mount_point, smb_share, smb_user, smb_password):
+        return True
+    else:
+        messagebox.showerror("Fehler", "SMB-Share konnte nicht gemountet werden.")
+        return False
 
 # Define main application window and appearance
 app = ctk.CTk()
@@ -107,6 +182,7 @@ def get_disk_usage_percent(path):
 
 # Updates the GUI to show available disk space
 def update_disk_usage_display():
+    ensure_smb_mounted()
     used, free, total, percent = get_disk_usage_percent(destination_path)
     disk_progress.set(percent / 100)
     total_gb = total / (1024**3)
@@ -303,6 +379,10 @@ def show_copy_progress(src_folder, dst_folder):
 # Starts copying process and resets form
 def copy_dicom_folder():
     global dicom_folder, current_patient_info
+    # Ensure SMB is mounted before copying
+    if smb_mount_point and smb_share:
+        if not ensure_smb_mounted():
+            return
     if not dicom_folder or not os.path.isdir(dicom_folder):
         messagebox.showerror("Fehler", "Kein gültiger DICOM-Ordner geladen.")
         return
