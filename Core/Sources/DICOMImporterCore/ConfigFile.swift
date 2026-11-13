@@ -134,7 +134,14 @@ public struct ImporterConfig: Equatable, Sendable {
         case ("archive", "url"): webDAVURL = optionalValue
         case ("archive", "user"), ("archive", "username"): webDAVUser = optionalValue
         case ("archive", "password"): webDAVPassword = optionalValue
-        case ("archive", "certificate_sha256"), ("archive", "fingerprint"): certificateSHA256 = optionalValue
+        case ("archive", "certificate_sha256"), ("archive", "fingerprint"):
+            // Accept the raw openssl output "sha256 Fingerprint=AA:BB:…" as well.
+            let fingerprint = optionalValue.map { $0.components(separatedBy: "=").last ?? $0 }
+            if let fingerprint, CertificateFingerprint.normalize(fingerprint).filter(\.isHexDigit).count != 64 {
+                warnings.append("\(location): SHA-256-Fingerabdruck muss 32 Bytes (64 Hex-Zeichen) haben – unvollständig kopiert?")
+            } else {
+                certificateSHA256 = fingerprint
+            }
         case ("archive", "folder"), ("archive", "path"): folderPath = optionalValue.map(Self.expandTilde)
         case ("general", "auto_scan"): setBool(\.autoScanMedia)
         case ("general", "eject"): setBool(\.ejectAfterImport)
