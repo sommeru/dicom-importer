@@ -4,3 +4,9 @@ icon.iconset/
 icon.iconset/
 DICOM-Importer.spec
 .DS_Store
+*.xcodeproj/
+xcuserdata/
+.build/
+Core/.build/
+.swiftpm/
+DerivedData/

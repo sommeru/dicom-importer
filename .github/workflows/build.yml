@@ -1,0 +1,41 @@
+name: Build & Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-tests:
+    name: Core tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test DICOMImporterCore
+        run: swift test --package-path Core
+
+  app:
+    name: Build macOS app
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build (ad-hoc signed)
+        run: |
+          xcodebuild -project DICOMImporter.xcodeproj -scheme DICOMImporter -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO build | tee xcodebuild.log | grep -E "error:|warning: .*(deprecated|never)|BUILD" || true
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Package app
+        run: |
+          cd build/Build/Products/Release
+          ditto -c -k --keepParent "DICOM-Importer.app" "$GITHUB_WORKSPACE/DICOM-Importer.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DICOM-Importer
+          path: DICOM-Importer.zip
