@@ -26,6 +26,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Die Kamera wird verwendet, um QR-Codes auf Befundbriefen zu scannen, über die Untersuchungen heruntergeladen werden können.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Der Zugriff auf das lokale Netzwerk wird benötigt, um Untersuchungen auf das NAS (WebDAV) zu übertragen.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2025 J. Ulrich Sommer – GPLv3</string>
 	<key>NSPrincipalClass</key>
