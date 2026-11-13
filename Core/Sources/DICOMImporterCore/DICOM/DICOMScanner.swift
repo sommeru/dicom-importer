@@ -4,6 +4,11 @@ import Foundation
 public struct StudyFile: Sendable, Hashable, Codable {
     public var relativePath: String
     public var size: Int64
+
+    public init(relativePath: String, size: Int64) {
+        self.relativePath = relativePath
+        self.size = size
+    }
 }
 
 /// All files of one study (grouped by Study Instance UID).

@@ -1,70 +1,88 @@
 # DICOM-Importer
 
-A macOS application to import DICOM data from CD-ROMs or folders and save them in a structured and human-readable format.
+Native macOS-App (SwiftUI, macOS 14+) zum Einlesen von DICOM-Untersuchungen – von CD/DVD, aus Ordnern/ZIP-Archiven oder über den **QR-Code** eines Befundbriefs (Bildportal) – und zur Ablage auf einem NAS, bevorzugt per **WebDAV**.
 
-## Features
+> Version 2 ist eine vollständige Neuentwicklung. Die bisherige Python/Tk-Version liegt unter [`legacy/`](legacy/).
 
-- Automatically detects DICOM folders (even nested)
-- Extracts patient information (First name, Last name, DOB, Study date, Modality)
-- Displays editable form fields for patient data
-- Calculates folder size and available disk space
-- Graphical progress bar with MB display during copying
-- Allows cancellation of copy operation with cleanup
-- Saves to a structured folder name like: `20240621-19800101-Smith, John-CT`
+## Was ist neu gegenüber Version 1?
 
-## Screenshots
+| Problem in v1 | Lösung in v2 |
+|---|---|
+| Import scheitert, wenn der Mountpoint nicht verfügbar ist | **Lokale Warteschlange:** Die Untersuchung wird zuerst lokal gesichert (CD kann sofort raus), die Übertragung ins Archiv läuft im Hintergrund und wird automatisch wiederholt (Netzwerkwechsel, alle 60 s, Backoff bis 30 min). Unterbrochene Uploads werden fortgesetzt. |
+| Mounten über die App klappt oft nicht | **Kein Mounten mehr nötig:** WebDAV direkt über HTTPS. Alternativ ein beliebiger (im Finder verbundener) Ordner. |
+| Transfer aufs NAS | **WebDAV-Client** (PROPFIND/MKCOL/PUT/MOVE), Passwort im Schlüsselbund, selbstsignierte NAS-Zertifikate per SHA-256-Fingerabdruck vertrauen, freier Speicher per Quota. Upload in einen temporären Ordner, der erst am Ende umbenannt wird → **keine halb kopierten Untersuchungen im Archiv**. |
+| Untersuchungen nur per QR-Code | **QR-Scanner** (Mac-Kamera oder iPhone via Continuity Camera, Foto/PDF des Briefs, Zwischenablage) → Portal öffnet sich in einem eingebauten Browser (ohne gespeicherte Cookies). Heruntergeladene ZIP/DICOM-Dateien werden automatisch entpackt und eingelesen. |
+| Python/Tk, PyInstaller-Bundle | **Native SwiftUI-App**, eigener schneller DICOM-Header-Parser ohne Abhängigkeiten. |
 
-![App Screenshot](screenshot.png)
+Weitere Verbesserungen:
 
-## Installation
+- Eingelegte DICOM-CDs werden automatisch erkannt und eingelesen, danach optional ausgeworfen.
+- Mehrere Untersuchungen auf einer CD werden getrennt (nach Study Instance UID) und einzeln archiviert.
+- Nur DICOM-Dateien werden übernommen (Viewer-Software etc. auf der CD wird ignoriert).
+- Modalität aus allen Serien (z. B. `PT+CT`), SR/PR/KO werden ignoriert.
+- Zeichensätze (ISO_IR 100/192) für Umlaute, optional `MUSTERMANN` → `Mustermann`.
+- Ordnername wie bisher: `JJJJMMTT-JJJJMMTT-Nachname, Vorname-MOD` (Untersuchungsdatum, Geburtsdatum). Existiert er schon, wird ` (2)` angehängt.
 
-Requires Python 3.11+ and [pyinstaller](https://pyinstaller.org) (for building the app).
+## Projektstruktur
 
-Clone the repository:
-
-```bash
-git clone https://github.com/sommeru/dicom-importer.git
-cd dicom-importer
+```
+Core/        Swift Package „DICOMImporterCore“ (plattformneutral, getestet)
+  DICOM/        DICOM-Header-Parser, Scanner (Gruppierung nach Studie)
+  Destinations/ WebDAV- und Ordner-Ziel
+  Transfer/     Persistente Warteschlange (Outbox), Staging
+App/         SwiftUI-App (Import, QR/Portal, Warteschlange, Einstellungen)
+project.yml  XcodeGen-Projektbeschreibung
+legacy/      alte Python-Version
 ```
 
+## Bauen
 
-
-## Creating an `.icns` Icon from PNG
-
-To convert the icon for macOS:
+Voraussetzungen: Xcode 16+, [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```bash
-mkdir icon.iconset
-sips -z 16 16     icon.png --out icon.iconset/icon_16x16.png
-sips -z 32 32     icon.png --out icon.iconset/icon_16x16@2x.png
-sips -z 32 32     icon.png --out icon.iconset/icon_32x32.png
-sips -z 64 64     icon.png --out icon.iconset/icon_32x32@2x.png
-sips -z 128 128   icon.png --out icon.iconset/icon_128x128.png
-sips -z 256 256   icon.png --out icon.iconset/icon_128x128@2x.png
-sips -z 256 256   icon.png --out icon.iconset/icon_256x256.png
-sips -z 512 512   icon.png --out icon.iconset/icon_256x256@2x.png
-sips -z 512 512   icon.png --out icon.iconset/icon_512x512.png
-cp icon.png icon.iconset/icon_512x512@2x.png
-iconutil -c icns icon.iconset
-rm -r icon.iconset
+brew install xcodegen
 ```
-
-Install dependencies (if any), then build the app:
 
 ```bash
-pyinstaller --windowed --name "DICOM-Importer" --icon=icon.icns --add-data "icon.png:." main.py
+xcodegen generate
 ```
 
-The `.app` bundle will be created in the `dist/` folder.
+```bash
+open DICOMImporter.xcodeproj
+```
 
-## Install
-Copy APP to destination folder
+Tests des Kerns (ohne Xcode-Projekt):
 
-Create .dicom-importer in home directory
-[settings]
-destination_path = /Volumes/Dicom
+```bash
+swift test --package-path Core
+```
 
+Die GitHub Action `.github/workflows/build.yml` führt die Tests aus und baut eine ad-hoc-signierte App als Artefakt.
+Eine ad-hoc-signierte App muss beim ersten Start per Rechtsklick → „Öffnen“ gestartet werden.
 
-## License
+## Einrichtung
 
-GNU3 License. © 2025 J. Ulrich Sommer
+### WebDAV auf Synology (empfohlen)
+
+1. Im Paket-Zentrum **WebDAV Server** installieren, HTTPS aktivieren (Port 5006).
+2. Freigegebenen Ordner (z. B. `DICOM`) anlegen, Benutzer mit Schreibrecht.
+3. In der App unter *Einstellungen → Archiv*: `https://<nas>:5006/DICOM`, Benutzer, Passwort → *Verbindung testen*.
+4. Bei selbstsigniertem Zertifikat wird der SHA-256-Fingerabdruck angezeigt; nach Abgleich mit dem NAS *Diesem Zertifikat vertrauen*.
+
+### Ordner / SMB
+
+Alternativ ein lokaler Ordner oder eine im Finder verbundene Freigabe. Ist sie nicht verbunden, bleiben die Daten in der Warteschlange.
+
+### Lokale Daten
+
+Warteschlange und zwischengespeicherte Untersuchungen liegen unter
+`~/Library/Application Support/DICOM-Importer/Outbox`. Nach erfolgreicher Übertragung werden die lokalen Kopien gelöscht.
+Portal-Downloads werden nach dem Sichern bzw. beim nächsten Start entfernt. Protokoll: Konsole.app, Subsystem `de.sommeru.DICOMImporter`.
+
+## Hinweise zu Bildportalen
+
+Die Portale der Praxen/Kliniken sind sehr unterschiedlich. Die App öffnet die Adresse aus dem QR-Code in einem eingebetteten Browser; Anmeldung (Geburtsdatum, Zugangscode) erfolgt wie gewohnt. Jeder Download (ZIP, ISO, DICOM) wird abgefangen und eingelesen. Portale, die nur einen Online-Viewer ohne Download anbieten, können nicht übernommen werden.
+
+## Lizenz
+
+GPLv3. © 2025 J. Ulrich Sommer

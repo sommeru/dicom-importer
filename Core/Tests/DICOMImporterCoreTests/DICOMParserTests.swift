@@ -117,3 +117,23 @@ final class ArchiveNamingTests: XCTestCase {
         XCTAssertEqual(ArchiveNaming.displayDate("19800201"), "01.02.1980")
     }
 }
+
+final class QRPayloadTests: XCTestCase {
+    func testPlainURL() {
+        XCTAssertEqual(QRPayload.portalURL(from: "https://portal.example.de/s/AbC123?pin=1")?.host, "portal.example.de")
+    }
+
+    func testWWWWithoutScheme() {
+        XCTAssertEqual(QRPayload.portalURL(from: "www.example.de/abc")?.absoluteString, "https://www.example.de/abc")
+    }
+
+    func testEmbeddedURL() {
+        XCTAssertEqual(QRPayload.portalURL(from: "Ihre Bilder: https://bilder.example.de/x Code 4711")?.absoluteString, "https://bilder.example.de/x")
+    }
+
+    func testRejectsNonWeb() {
+        XCTAssertNil(QRPayload.portalURL(from: "file:///etc/passwd"))
+        XCTAssertNil(QRPayload.portalURL(from: "javascript:alert(1)"))
+        XCTAssertNil(QRPayload.portalURL(from: "Zugangscode 123456"))
+    }
+}

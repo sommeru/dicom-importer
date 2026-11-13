@@ -217,21 +217,21 @@ public actor TransferQueue {
         let limit = max(1, maxConcurrentUploads)
         try await withThrowingTaskGroup(of: String.self) { group in
             var iterator = pending.makeIterator()
-            func addNext() -> Bool {
-                guard let file = iterator.next() else { return false }
-                let local = staging.appendingPathComponent(file.relativePath)
-                let remote = "\(partial)/\(file.relativePath)"
-                group.addTask {
-                    try await destination.upload(fileAt: local, to: remote)
-                    return file.relativePath
+            var inFlight = 0
+            while true {
+                while inFlight < limit, let file = iterator.next() {
+                    let local = staging.appendingPathComponent(file.relativePath)
+                    let remote = "\(partial)/\(file.relativePath)"
+                    group.addTask {
+                        try await destination.upload(fileAt: local, to: remote)
+                        return file.relativePath
+                    }
+                    inFlight += 1
                 }
-                return true
-            }
-            for _ in 0..<limit { if !addNext() { break } }
-            while let done = try await group.next() {
+                guard let done = try await group.next() else { break }
+                inFlight -= 1
                 update(id) { $0.uploadedFiles.insert(done) }
                 save(force: false)
-                _ = addNext()
             }
         }
 

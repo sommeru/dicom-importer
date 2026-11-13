@@ -1,0 +1,41 @@
+import Foundation
+
+enum SettingsKey {
+    static let destinationKind = "destinationKind"
+    static let webDAVURL = "webDAVURL"
+    static let webDAVUser = "webDAVUser"
+    static let webDAVFingerprint = "webDAVFingerprint"
+    static let folderPath = "folderPath"
+    static let autoScanMedia = "autoScanMedia"
+    static let ejectAfterImport = "ejectAfterImport"
+    static let capitalizeNames = "capitalizeNames"
+
+    static func registerDefaults() {
+        UserDefaults.standard.register(defaults: [
+            destinationKind: DestinationKind.webDAV.rawValue,
+            autoScanMedia: true,
+            ejectAfterImport: true,
+            capitalizeNames: false,
+        ])
+    }
+}
+
+enum DestinationKind: String, CaseIterable, Identifiable {
+    case webDAV = "webdav"
+    case folder
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .webDAV: return "WebDAV (empfohlen)"
+        case .folder: return "Ordner / gemountete Freigabe"
+        }
+    }
+}
+
+enum Format {
+    static func bytes(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+    }
+}
