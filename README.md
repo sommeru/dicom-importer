@@ -47,6 +47,18 @@ project.yml  XcodeGen-Projektbeschreibung
 legacy/      alte Python-Version
 ```
 
+## Installation
+
+1. Aktuelles DMG von der [Releases-Seite](https://github.com/sommeru/dicom-importer/releases/latest) laden.
+2. DMG öffnen und `DICOM-Importer.app` nach „Programme“ ziehen (bei einem Update die alte App ersetzen – Einstellungen und Warteschlange bleiben erhalten).
+3. Die App ist nur ad-hoc signiert (nicht notarisiert). macOS blockiert sie daher beim ersten Start. Entweder per Rechtsklick → „Öffnen“ starten oder die Quarantäne-Markierung entfernen:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/DICOM-Importer.app
+```
+
+Beim ersten Zugriff fragt macOS nach der Erlaubnis für das **lokale Netzwerk** (für das NAS) und ggf. die **Kamera** (QR-Code) – beides erlauben.
+
 ## Bauen
 
 Voraussetzungen: Xcode 16+, [XcodeGen](https://github.com/yonaskolb/XcodeGen).
@@ -70,7 +82,7 @@ swift test --package-path Core
 ```
 
 Die GitHub Action `.github/workflows/build.yml` führt die Tests aus und baut eine ad-hoc-signierte App als Artefakt.
-Eine ad-hoc-signierte App muss beim ersten Start per Rechtsklick → „Öffnen“ gestartet werden.
+Releases werden über den Workflow *Release* erstellt (*Actions → Release → Run workflow*, Versionsnummer eingeben) oder per Tag `v2.x.y`.
 
 ## Einrichtung
 
