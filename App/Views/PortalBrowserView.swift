@@ -45,7 +45,9 @@ struct PortalBrowserView: View {
                 Task { await model.portalDownloadFinished(file, container: container) }
             }
             if browser.currentURL == nil { browser.load(startURL) }
+            browser.beginBackgroundActivity()
         }
+        .onDisappear { browser.endBackgroundActivity() }
     }
 
     @ViewBuilder
@@ -135,6 +137,17 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
     var onDownloadFinished: ((URL, URL) -> Void)?
 
     private var pending: [ObjectIdentifier: (id: UUID, file: URL)] = [:]
+    private var activity: NSObjectProtocol?
+
+    /// While the portal window is open the app is exempt from App Nap and idle sleep.
+    func beginBackgroundActivity() {
+        if activity == nil { activity = BackgroundActivity.begin("Bildportal / Download") }
+    }
+
+    func endBackgroundActivity() {
+        if let activity { BackgroundActivity.end(activity) }
+        activity = nil
+    }
     private var observations: [NSKeyValueObservation] = []
 
     var isSecure: Bool { (currentURL?.scheme ?? "https") == "https" }
@@ -146,6 +159,9 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
         configuration.websiteDataStore = .nonPersistent()
         // Some portals reject unknown browsers.
         configuration.applicationNameForUserAgent = "Version/17.0 Safari/605.1.15"
+        // Do not throttle JavaScript/timers when the window is in the background or hidden:
+        // many portals prepare the ZIP download in the page and would stall otherwise.
+        configuration.preferences.inactiveSchedulingPolicy = .none
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
