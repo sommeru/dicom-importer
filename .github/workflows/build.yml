@@ -31,11 +31,15 @@ jobs:
             -destination 'platform=macOS' -derivedDataPath build \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO build | tee xcodebuild.log | grep -E "error:|warning: .*(deprecated|never)|BUILD" || true
           test ${PIPESTATUS[0]} -eq 0
-      - name: Package app
+      - name: Package app (DMG)
         run: |
-          cd build/Build/Products/Release
-          ditto -c -k --keepParent "DICOM-Importer.app" "$GITHUB_WORKSPACE/DICOM-Importer.zip"
+          mkdir -p dmg
+          cp -R "build/Build/Products/Release/DICOM-Importer.app" dmg/
+          ln -s /Applications dmg/Programme
+          hdiutil create -volname "DICOM-Importer" -srcfolder dmg -ov -format UDZO DICOM-Importer.dmg
+          hdiutil verify DICOM-Importer.dmg
       - uses: actions/upload-artifact@v4
         with:
-          name: DICOM-Importer
-          path: DICOM-Importer.zip
+          name: DICOM-Importer-dmg
+          path: DICOM-Importer.dmg
+          compression-level: 0
