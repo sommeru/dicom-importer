@@ -300,6 +300,8 @@ final class AppModel {
         let capitalize = UserDefaults.standard.bool(forKey: SettingsKey.capitalizeNames)
 
         scanTask = Task {
+            let activity = BackgroundActivity.begin("DICOM-Daten einlesen")
+            defer { BackgroundActivity.end(activity) }
             let flag = CancelFlag()
             do {
                 let result = try await withTaskCancellationHandler {
@@ -390,6 +392,8 @@ final class AppModel {
         isStaging = true
         stagingFraction = 0
         Task {
+            let activity = BackgroundActivity.begin("Untersuchungen lokal sichern")
+            defer { BackgroundActivity.end(activity) }
             var copied: Int64 = 0
             for draft in selected {
                 var files = draft.study.files
@@ -503,7 +507,11 @@ final class AppModel {
             destinationHealth = .offline(Self.describe(error))
             return
         }
-        await queue.processPending(destination: destination)
+        if pendingJobCount > 0 {
+            let activity = BackgroundActivity.begin("Untersuchungen ins Archiv übertragen")
+            defer { BackgroundActivity.end(activity) }
+            await queue.processPending(destination: destination)
+        }
         if let status = try? await destination.status() {
             destinationHealth = .online(status)
         }

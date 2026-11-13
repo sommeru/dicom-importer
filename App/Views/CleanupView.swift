@@ -29,6 +29,8 @@ final class CleanupModel {
         progress = CleanupProgress(done: 0, total: 0, current: "")
         let analyzer = ArchiveAnalyzer(destination: destination, protectedNames: protectedNames, capitalizeNames: capitalizeNames)
         task = Task {
+            let activity = BackgroundActivity.begin("Archiv analysieren")
+            defer { BackgroundActivity.end(activity) }
             do {
                 let plan = try await analyzer.analyze(progress: { progress in
                     Task { @MainActor [weak self] in self?.progress = progress }
@@ -53,6 +55,8 @@ final class CleanupModel {
         progress = CleanupProgress(done: 0, total: actions.count, current: "")
         let executor = CleanupExecutor(destination: destination)
         task = Task {
+            let activity = BackgroundActivity.begin("Archiv aufräumen")
+            defer { BackgroundActivity.end(activity) }
             let results = await executor.perform(actions, progress: { progress in
                 Task { @MainActor [weak self] in self?.progress = progress }
             })
