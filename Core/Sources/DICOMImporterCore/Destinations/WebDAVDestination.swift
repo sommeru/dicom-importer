@@ -23,6 +23,7 @@ public enum WebDAVError: LocalizedError, Equatable {
     case authenticationFailed
     case untrustedCertificate(host: String, fingerprint: String)
     case invalidResponse
+    case partialFailure(method: String, path: String)
 
     public var errorDescription: String? {
         switch self {
@@ -35,6 +36,8 @@ public enum WebDAVError: LocalizedError, Equatable {
             return "Das Zertifikat von \(host) ist nicht vertrauenswürdig (selbstsigniert?)."
         case .invalidResponse:
             return "Ungültige Antwort vom WebDAV-Server."
+        case .partialFailure(let method, let path):
+            return "WebDAV \(method) \(path) nur teilweise ausgeführt (einzelne Dateien gesperrt oder ohne Berechtigung)."
         }
     }
 }
@@ -126,6 +129,7 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
         )
         switch response.statusCode {
         case 201, 204: return
+        case 207: throw WebDAVError.partialFailure(method: "MOVE", path: source)
         case 412: throw DestinationError.alreadyExists(destination)
         default: throw WebDAVError.http(status: response.statusCode, method: "MOVE", path: source)
         }
@@ -133,6 +137,7 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
 
     public func remove(_ path: String) async throws {
         let (_, response) = try await send("DELETE", path: path, isDirectory: false, headers: [:], body: nil)
+        if response.statusCode == 207 { throw WebDAVError.partialFailure(method: "DELETE", path: path) }
         guard (200...299).contains(response.statusCode) || response.statusCode == 404 else {
             throw WebDAVError.http(status: response.statusCode, method: "DELETE", path: path)
         }
@@ -185,6 +190,7 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
         )
         switch response.statusCode {
         case 201, 204: return
+        case 207: throw WebDAVError.partialFailure(method: "MOVE", path: source)
         case 412: throw DestinationError.alreadyExists(destination)
         default: throw WebDAVError.http(status: response.statusCode, method: "MOVE", path: source)
         }
@@ -193,6 +199,7 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
     public func removeDirectory(_ path: String) async throws {
         guard !path.split(separator: "/").isEmpty else { return } // never delete the root
         let (_, response) = try await send("DELETE", path: path, isDirectory: true, headers: [:], body: nil)
+        if response.statusCode == 207 { throw WebDAVError.partialFailure(method: "DELETE", path: path) }
         guard (200...299).contains(response.statusCode) || response.statusCode == 404 else {
             throw WebDAVError.http(status: response.statusCode, method: "DELETE", path: path)
         }
@@ -227,6 +234,10 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
     private func send(_ method: String, path: String, isDirectory: Bool, headers: [String: String], body: Data?) async throws -> (Data, HTTPURLResponse) {
         var request = makeRequest(method, path: path, isDirectory: isDirectory)
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+        if method == "DELETE" || method == "MOVE" {
+            // Deleting/moving folders with thousands of images can take minutes on a NAS.
+            request.timeoutInterval = 900
+        }
         if let body {
             request.httpBody = body
             request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")

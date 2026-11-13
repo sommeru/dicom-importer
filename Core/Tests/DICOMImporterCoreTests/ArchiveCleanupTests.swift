@@ -128,6 +128,40 @@ final class ArchiveCleanupTests: XCTestCase {
         XCTAssertEqual(ArchiveAnalyzer.makePlan([report]).first?.kind, .deleteIncompleteUpload)
     }
 
+    func testRenameRecommendations() {
+        let expected = "20250312-19961206-KREUZER, NIKOLAUS-CT"
+        // Formatting only → pre-selected
+        XCTAssertEqual(ArchiveAnalyzer.renameRecommendation(current: "20250312-19961206-Kreuzer Nikolaus-CT", expected: expected), true)
+        XCTAssertEqual(ArchiveAnalyzer.renameRecommendation(current: "20250312-19961206-Nikolaus- Kreuzer-CT", expected: expected), true)
+        // Different spelling → not pre-selected
+        XCTAssertEqual(ArchiveAnalyzer.renameRecommendation(current: "20250312-19961206-Kreutzer, Nikolaus-CT", expected: expected), false)
+        // Order of modalities is irrelevant
+        XCTAssertNil(ArchiveAnalyzer.renameRecommendation(current: "20260420-19490307-Leitner, Ludwig-CT+PT",
+                                                          expected: "20260420-19490307-Leitner, Ludwig-PT+CT"))
+    }
+
+    func testSplitDoesNotCreateDuplicates() async throws {
+        // Study 1.1 exists on its own and additionally inside a mixed folder.
+        for path in ["20240621-19800101-DOE, JOHN-CT/IM0", "Gemischt/A/IM0"] {
+            try write(dicom(uid: "1.1", name: "DOE^JOHN", date: "20240621", modality: "CT", series: "1.1.1"), path)
+        }
+        try write(dicom(uid: "2.2", name: "DOE^JOHN", date: "20240622", modality: "MR", series: "2.2.1"), "Gemischt/B/IM0")
+        try write(dicom(uid: "2.2", name: "DOE^JOHN", date: "20240622", modality: "MR", series: "2.2.1"), "Gemischt/B/IM1")
+
+        let destination = LocalFolderDestination(root: archive)
+        let plan = try await ArchiveAnalyzer(destination: destination).analyze()
+        let split = try XCTUnwrap(plan.actions.first { $0.kind == .split })
+        XCTAssertEqual(split.splitGroups.first?.duplicateOf, "20240621-19800101-DOE, JOHN-CT")
+
+        let results = await CleanupExecutor(destination: destination).perform(plan.actions.filter(\.recommended))
+        XCTAssertTrue(results.allSatisfy { !$0.failed }, results.map(\.message).joined(separator: "\n"))
+        XCTAssertTrue(exists("20240622-19800101-DOE, JOHN-MR/B/IM1"))
+        XCTAssertFalse(exists("20240621-19800101-DOE, JOHN-CT (2)"), "no new duplicate")
+
+        let second = try await ArchiveAnalyzer(destination: destination).analyze()
+        XCTAssertTrue(second.actions.isEmpty, "\(second.actions.map { "\($0.kind) \($0.folder)" })")
+    }
+
     func testFolderNameParsing() {
         let parsed = ArchiveNaming.parseFolderName("20240621-19800101-Müller-Lüdenscheidt, Max-PT+CT (2)")
         XCTAssertEqual(parsed?.name, "Müller-Lüdenscheidt, Max")

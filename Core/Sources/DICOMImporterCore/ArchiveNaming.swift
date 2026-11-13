@@ -86,8 +86,24 @@ public enum ArchiveNaming {
         return String(value[..<range.lowerBound])
     }
 
-    /// Same folder name apart from upper/lower case and a counter suffix.
+    /// Same folder name apart from upper/lower case, a counter suffix and the order of
+    /// modalities (`PT+CT` = `CT+PT`).
     public static func equivalent(_ lhs: String, _ rhs: String) -> Bool {
-        stripCounterSuffix(lhs).compare(stripCounterSuffix(rhs), options: [.caseInsensitive]) == .orderedSame
+        let a = stripCounterSuffix(lhs), b = stripCounterSuffix(rhs)
+        if a.compare(b, options: [.caseInsensitive]) == .orderedSame { return true }
+        guard let pa = parseFolderName(a), let pb = parseFolderName(b) else { return false }
+        return pa.studyDate == pb.studyDate && pa.birthDate == pb.birthDate
+            && pa.name.compare(pb.name, options: [.caseInsensitive]) == .orderedSame
+            && modalitySet(pa.modality) == modalitySet(pb.modality)
+    }
+
+    public static func modalitySet(_ value: String) -> Set<String> {
+        Set(value.uppercased().split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) })
+    }
+
+    /// Name words independent of order, case and punctuation:
+    /// `Torsten- Dänner` and `Dänner, Torsten` both give `["dänner", "torsten"]`.
+    public static func nameTokens(_ value: String) -> [String] {
+        value.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }.sorted()
     }
 }

@@ -41,6 +41,8 @@ public struct SplitGroup: Sendable, Hashable {
     public var targetName: String
     public var files: [String]
     public var summary: String
+    /// The study already exists identically in this folder: the files are deleted instead of moved.
+    public var duplicateOf: String? = nil
 }
 
 public struct CleanupAction: Identifiable, Sendable, Hashable {
@@ -323,10 +325,14 @@ public final class ArchiveAnalyzer: @unchecked Sendable {
         if incompleteData { return false }
         guard let expectedParts else { return false }
         if currentParts.studyDate != expectedParts.studyDate || currentParts.birthDate != expectedParts.birthDate
-            || currentParts.modality.uppercased() != expectedParts.modality.uppercased() {
+            || ArchiveNaming.modalitySet(currentParts.modality) != ArchiveNaming.modalitySet(expectedParts.modality) {
             return true
         }
-        // Only the patient name differs: possibly a deliberate manual correction.
+        // Same words, only formatting differs ("Kreuzer Nikolaus" → "Kreuzer, Nikolaus").
+        if ArchiveNaming.nameTokens(currentParts.name) == ArchiveNaming.nameTokens(expectedParts.name) {
+            return true
+        }
+        // Different spelling of the patient name: possibly a deliberate manual correction.
         return false
     }
 
@@ -380,13 +386,27 @@ public final class ArchiveAnalyzer: @unchecked Sendable {
             }
         }
 
-        // Mixed folders
+        // Mixed folders. A study that already exists identically as its own folder is not
+        // moved out (that would only create a duplicate) but deleted from the mixed folder.
+        var existingStudies: [String: StudySummary] = [:]
+        var existingFolder: [String: String] = [:]
+        for report in reports where report.studies.count == 1 && !handled.contains(report.name) {
+            if let uid = report.studies[0].uid, existingFolder[uid] == nil {
+                existingStudies[uid] = report.studies[0]
+                existingFolder[uid] = report.name
+            }
+        }
         for report in reports where !handled.contains(report.name) && report.studies.count > 1 {
             handled.insert(report.name)
             let stay = report.studies[0]
             let stayName = expectedName(stay, capitalizeNames: capitalizeNames)
-            let groups = report.studies.dropFirst().map {
-                SplitGroup(targetName: expectedName($0, capitalizeNames: capitalizeNames), files: $0.files, summary: $0.label)
+            let groups = report.studies.dropFirst().map { study -> SplitGroup in
+                var group = SplitGroup(targetName: expectedName(study, capitalizeNames: capitalizeNames), files: study.files, summary: study.label)
+                if let uid = study.uid, let other = existingStudies[uid],
+                   other.files.count == study.files.count, other.bytes == study.bytes {
+                    group.duplicateOf = existingFolder[uid]
+                }
+                return group
             }
             let detail = "\(report.studies.count) Untersuchungen in einem Ordner. Bleibt: \(stay.label)"
             actions.append(CleanupAction(kind: .split, folder: report.name,
@@ -439,18 +459,18 @@ public final class CleanupExecutor: @unchecked Sendable {
         switch action.kind {
         case .deleteEmpty:
             guard !(try await containsFiles(folder)) else { throw CleanupError.changed("„\(folder)“ ist nicht mehr leer") }
-            try await destination.removeDirectory(folder)
+            try await removeVerified(folder)
             return "Gelöscht"
 
         case .deleteIncompleteUpload, .deleteNoDICOM:
-            try await destination.removeDirectory(folder)
+            try await removeVerified(folder)
             return "Gelöscht"
 
         case .deleteDuplicate:
             guard let keeper = action.targetName, try await destination.exists(keeper) else {
                 throw CleanupError.changed("Vergleichsordner „\(action.targetName ?? "")“ fehlt – nichts gelöscht")
             }
-            try await destination.removeDirectory(folder)
+            try await removeVerified(folder)
             return "Gelöscht (Original: \(keeper))"
 
         case .mergeDuplicate:
@@ -469,6 +489,14 @@ public final class CleanupExecutor: @unchecked Sendable {
         case .split:
             var created: [String] = []
             for group in action.splitGroups {
+                if let original = group.duplicateOf {
+                    guard try await destination.exists(original) else {
+                        throw CleanupError.changed("Vergleichsordner „\(original)“ fehlt")
+                    }
+                    for file in group.files { try await destination.remove("\(folder)/\(file)") }
+                    created.append("\(group.files.count) doppelte Dateien entfernt (vorhanden in \(original))")
+                    continue
+                }
                 let name = try await uniqueName(group.targetName, reserved: &reserved)
                 try await destination.createDirectory(name)
                 var directories = Set<String>()
@@ -487,10 +515,10 @@ public final class CleanupExecutor: @unchecked Sendable {
                 }
                 created.append(name)
             }
-            var message = "Neu: " + created.joined(separator: ", ")
+            var message = created.joined(separator: ", ")
             if let target = action.targetName {
                 let name = try await uniqueName(target, reserved: &reserved)
-                try await destination.move(folder, to: name)
+                try await moveVerified(folder, to: name)
                 message += "; umbenannt in \(name)"
             }
             return message
@@ -498,8 +526,24 @@ public final class CleanupExecutor: @unchecked Sendable {
         case .rename:
             guard let target = action.targetName, target != folder else { return "Unverändert" }
             let name = try await uniqueName(target, reserved: &reserved)
-            try await destination.move(folder, to: name)
+            try await moveVerified(folder, to: name)
             return "Umbenannt in \(name)"
+        }
+    }
+
+    /// Deletes and checks that the folder is really gone (some servers report success
+    /// although locked files remain).
+    private func removeVerified(_ folder: String) async throws {
+        try await destination.removeDirectory(folder)
+        if try await destination.exists(folder) {
+            throw CleanupError.notCompleted("„\(folder)“ ist nach dem Löschen noch vorhanden (Dateien gesperrt oder fehlende Berechtigung?)")
+        }
+    }
+
+    private func moveVerified(_ folder: String, to target: String) async throws {
+        try await destination.move(folder, to: target)
+        guard try await destination.exists(target), !(try await destination.exists(folder)) else {
+            throw CleanupError.notCompleted("Umbenennen von „\(folder)“ nicht vollständig")
         }
     }
 
@@ -532,10 +576,12 @@ public final class CleanupExecutor: @unchecked Sendable {
 
 public enum CleanupError: LocalizedError {
     case changed(String)
+    case notCompleted(String)
 
     public var errorDescription: String? {
         switch self {
         case .changed(let message): return "Übersprungen: \(message)"
+        case .notCompleted(let message): return "Fehlgeschlagen: \(message)"
         }
     }
 }

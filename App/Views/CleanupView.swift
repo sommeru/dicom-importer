@@ -301,9 +301,15 @@ private struct ActionRow: View {
                     }
                 }
                 ForEach(action.splitGroups, id: \.self) { group in
-                    Text("+ \(group.targetName)  (\(group.summary))")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.blue)
+                    if let original = group.duplicateOf {
+                        Text("− \(group.summary): bereits vorhanden in „\(original)“ – Dateien werden gelöscht")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.red)
+                    } else {
+                        Text("+ \(group.targetName)  (\(group.summary))")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.blue)
+                    }
                 }
                 Text(action.detail)
                     .font(.caption)
