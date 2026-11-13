@@ -17,6 +17,10 @@ public enum ArchiveNaming {
         return sanitize(parts.map { $0.isEmpty ? "NA" : $0 }.joined(separator: "-"))
     }
 
+    private static func clean(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Makes a string safe as a single path component on macOS, SMB and WebDAV shares.
     public static func sanitize(_ value: String) -> String {
         let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.controlCharacters)
