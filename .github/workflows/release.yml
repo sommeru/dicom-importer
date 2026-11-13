@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (z. B. 2.0.0)"
+        required: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then V="${{ github.event.inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+      - name: Test core
+        run: swift test --package-path Core
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build
+        run: |
+          xcodegen generate
+          xcodebuild -project DICOMImporter.xcodeproj -scheme DICOMImporter -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO build | tee xcodebuild.log | grep -E "error:|BUILD" || true
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Create DMG
+        run: |
+          mkdir -p dmg
+          ditto "build/Build/Products/Release/DICOM-Importer.app" "dmg/DICOM-Importer.app"
+          ln -s /Applications dmg/Programme
+          hdiutil create -volname "DICOM-Importer $VERSION" -srcfolder dmg -ov -format UDZO "DICOM-Importer-$VERSION.dmg"
+          hdiutil verify "DICOM-Importer-$VERSION.dmg"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          Native macOS-App (macOS 14+) zum Import von DICOM-Untersuchungen von CD/Ordner/ZIP oder per QR-Code (Bildportal) mit Übertragung ins Archiv per WebDAV.
+
+          **Installation:** DMG öffnen, App nach „Programme“ ziehen. Die App ist nur ad-hoc signiert: beim ersten Start Rechtsklick → „Öffnen“ oder
+          `xattr -dr com.apple.quarantine /Applications/DICOM-Importer.app`
+
+          Einrichtung und Konfigurationsdatei (`~/.dicom-importer`): siehe README.
+          EOF
+          gh release create "v$VERSION" "DICOM-Importer-$VERSION.dmg" \
+            --target "$GITHUB_SHA" --title "DICOM-Importer $VERSION" --notes-file notes.md --generate-notes
