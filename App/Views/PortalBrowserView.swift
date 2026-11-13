@@ -162,6 +162,16 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
         // Do not throttle JavaScript/timers when the window is in the background or hidden:
         // many portals prepare the ZIP download in the page and would stall otherwise.
         configuration.preferences.inactiveSchedulingPolicy = .none
+        // Some portals pause their download preparation while the page is hidden
+        // (Page Visibility API). Always report the page as visible.
+        let alwaysVisible = """
+        Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+        document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);
+        """
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: alwaysVisible, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        )
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
