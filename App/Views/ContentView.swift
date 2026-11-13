@@ -19,6 +19,10 @@ struct ContentView: View {
                         .badge(model.pendingJobCount)
                         .tag(SidebarItem.queue)
                 }
+                Section("Archiv") {
+                    Label("Archiv aufräumen", systemImage: "wand.and.stars")
+                        .tag(SidebarItem.cleanup)
+                }
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 230)
             .safeAreaInset(edge: .bottom) {
@@ -30,6 +34,7 @@ struct ContentView: View {
             case .importer: ImportView()
             case .qrCode: QRCodeView()
             case .queue: QueueView()
+            case .cleanup: CleanupView()
             }
         }
         .alert("Hinweis", isPresented: Binding(

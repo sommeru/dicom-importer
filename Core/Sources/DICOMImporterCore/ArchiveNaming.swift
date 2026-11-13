@@ -57,4 +57,37 @@ public enum ArchiveNaming {
         }
         return nil
     }
+
+    // MARK: - Recognising existing folder names
+
+    public struct ParsedFolderName: Equatable, Sendable {
+        public var studyDate: String
+        public var birthDate: String
+        public var name: String
+        public var modality: String
+    }
+
+    /// Splits `20240621-19800101-Mustermann, Max-CT (2)` into its parts, or nil if the
+    /// name does not follow the archive scheme.
+    public static func parseFolderName(_ value: String) -> ParsedFolderName? {
+        let base = stripCounterSuffix(value)
+        guard let regex = try? NSRegularExpression(pattern: #"^(\d{8}|NA)-(\d{8}|NA)-(.+)-([^-]+)$"#),
+              let match = regex.firstMatch(in: base, range: NSRange(base.startIndex..., in: base)),
+              match.numberOfRanges == 5 else { return nil }
+        func group(_ i: Int) -> String {
+            Range(match.range(at: i), in: base).map { String(base[$0]) } ?? ""
+        }
+        return ParsedFolderName(studyDate: group(1), birthDate: group(2), name: group(3), modality: group(4))
+    }
+
+    /// Removes a trailing ` (2)` counter added to avoid name clashes.
+    public static func stripCounterSuffix(_ value: String) -> String {
+        guard let range = value.range(of: #" \(\d+\)$"#, options: .regularExpression) else { return value }
+        return String(value[..<range.lowerBound])
+    }
+
+    /// Same folder name apart from upper/lower case and a counter suffix.
+    public static func equivalent(_ lhs: String, _ rhs: String) -> Bool {
+        stripCounterSuffix(lhs).compare(stripCounterSuffix(rhs), options: [.caseInsensitive]) == .orderedSame
+    }
 }

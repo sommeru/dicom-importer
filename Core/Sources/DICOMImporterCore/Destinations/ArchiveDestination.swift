@@ -28,6 +28,19 @@ public enum DestinationError: LocalizedError, Equatable {
     }
 }
 
+/// An entry of a directory listing in the archive.
+public struct RemoteItem: Sendable, Hashable {
+    public var name: String
+    public var isDirectory: Bool
+    public var size: Int64
+
+    public init(name: String, isDirectory: Bool, size: Int64) {
+        self.name = name
+        self.isDirectory = isDirectory
+        self.size = size
+    }
+}
+
 /// Where imported studies end up. Paths are `/`-separated and relative to the destination root.
 public protocol ArchiveDestination: Sendable {
     var displayName: String { get }
@@ -41,6 +54,17 @@ public protocol ArchiveDestination: Sendable {
     /// Renames/moves an item; fails with `DestinationError.alreadyExists` if the target exists.
     func move(_ source: String, to destination: String) async throws
     func remove(_ path: String) async throws
+
+    // Browsing and maintenance (used by the archive clean-up)
+
+    /// Direct children of a directory (`""` = root).
+    func list(_ path: String) async throws -> [RemoteItem]
+    /// Reads at most `maxBytes` from the beginning of a file (enough for DICOM headers).
+    func readPrefix(_ path: String, maxBytes: Int) async throws -> Data
+    /// Moves a single file; fails with `DestinationError.alreadyExists` if the target exists.
+    func moveFile(_ source: String, to destination: String) async throws
+    /// Deletes a directory including its contents.
+    func removeDirectory(_ path: String) async throws
 }
 
 /// A local or already mounted folder (e.g. an SMB share mounted by Finder).
@@ -97,5 +121,30 @@ public struct LocalFolderDestination: ArchiveDestination {
         if FileManager.default.fileExists(atPath: target.path) {
             try FileManager.default.removeItem(at: target)
         }
+    }
+
+    public func list(_ path: String) async throws -> [RemoteItem] {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey]
+        let urls = try FileManager.default.contentsOfDirectory(at: url(path), includingPropertiesForKeys: keys, options: [])
+        return urls.map { item in
+            let values = try? item.resourceValues(forKeys: Set(keys))
+            return RemoteItem(name: item.lastPathComponent, isDirectory: values?.isDirectory ?? false, size: Int64(values?.fileSize ?? 0))
+        }
+    }
+
+    public func readPrefix(_ path: String, maxBytes: Int) async throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url(path))
+        defer { try? handle.close() }
+        return try handle.read(upToCount: maxBytes) ?? Data()
+    }
+
+    public func moveFile(_ source: String, to destination: String) async throws {
+        let target = url(destination)
+        if FileManager.default.fileExists(atPath: target.path) { throw DestinationError.alreadyExists(destination) }
+        try FileManager.default.moveItem(at: url(source), to: target)
+    }
+
+    public func removeDirectory(_ path: String) async throws {
+        try await remove(path)
     }
 }

@@ -23,6 +23,18 @@ Weitere Verbesserungen:
 - Zeichensätze (ISO_IR 100/192) für Umlaute, optional `MUSTERMANN` → `Mustermann`.
 - Ordnername wie bisher: `JJJJMMTT-JJJJMMTT-Nachname, Vorname-MOD` (Untersuchungsdatum, Geburtsdatum). Existiert er schon, wird ` (2)` angehängt.
 
+## Archiv aufräumen
+
+Unter *Archiv aufräumen* wird das Archiv (WebDAV oder Ordner) analysiert. Pro Ordner werden nur die ersten 64 KB weniger Dateien gelesen (bei gemischten Ordnern alle). Erkannt werden:
+
+- leere Ordner und abgebrochene Übertragungen (`….upload-xxxxxxxx`, laufende Übertragungen sind ausgenommen)
+- Ordner ohne DICOM-Daten (nicht vorausgewählt)
+- doppelte Untersuchungen (gleiche Study Instance UID): identische werden gelöscht, abweichende können als Unterordner zusammengeführt werden
+- Ordner mit mehreren Untersuchungen: werden in je einen Ordner pro Untersuchung aufgeteilt
+- falsch benannte Ordner: Name wird aus den DICOM-Daten neu gebildet. Weicht nur der Patientenname ab (evtl. manuell korrigiert), ist der Vorschlag nicht vorausgewählt.
+
+Systemordner des NAS (`@Recycle`, `#recycle`, `.…`, `_…`) werden ignoriert. Erst nach Bestätigung der Liste wird ausgeführt; Löschungen sind **endgültig**.
+
 ## Projektstruktur
 
 ```

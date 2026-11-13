@@ -10,6 +10,7 @@ enum SidebarItem: Hashable {
     case importer
     case qrCode
     case queue
+    case cleanup
 }
 
 enum DestinationHealth: Equatable {
@@ -110,6 +111,7 @@ final class AppModel {
     var pendingJobCount: Int { jobs.filter { $0.state != .completed }.count }
 
     let queue: TransferQueue
+    let cleanup = CleanupModel()
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
     private var loopTask: Task<Void, Never>?
