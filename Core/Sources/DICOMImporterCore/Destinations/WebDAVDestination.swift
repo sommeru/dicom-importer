@@ -23,6 +23,7 @@ public enum WebDAVError: LocalizedError, Equatable {
     case authenticationFailed
     case untrustedCertificate(host: String, fingerprint: String)
     case invalidResponse
+    case partialFailure(method: String, path: String)
 
     public var errorDescription: String? {
         switch self {
@@ -35,6 +36,8 @@ public enum WebDAVError: LocalizedError, Equatable {
             return "Das Zertifikat von \(host) ist nicht vertrauenswürdig (selbstsigniert?)."
         case .invalidResponse:
             return "Ungültige Antwort vom WebDAV-Server."
+        case .partialFailure(let method, let path):
+            return "WebDAV \(method) \(path) nur teilweise ausgeführt (einzelne Dateien gesperrt oder ohne Berechtigung)."
         }
     }
 }
@@ -81,7 +84,8 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
     }
 
     public func exists(_ path: String) async throws -> Bool {
-        let (_, response) = try await send("PROPFIND", path: path, isDirectory: false, headers: ["Depth": "0"], body: nil)
+        // Only used for folders; the trailing slash avoids redirects on Apache-based NAS (QNAP).
+        let (_, response) = try await send("PROPFIND", path: path, isDirectory: true, headers: ["Depth": "0"], body: nil)
         switch response.statusCode {
         case 200, 207: return true
         case 404: return false
@@ -125,6 +129,7 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
         )
         switch response.statusCode {
         case 201, 204: return
+        case 207: throw WebDAVError.partialFailure(method: "MOVE", path: source)
         case 412: throw DestinationError.alreadyExists(destination)
         default: throw WebDAVError.http(status: response.statusCode, method: "MOVE", path: source)
         }
@@ -132,6 +137,69 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
 
     public func remove(_ path: String) async throws {
         let (_, response) = try await send("DELETE", path: path, isDirectory: false, headers: [:], body: nil)
+        if response.statusCode == 207 { throw WebDAVError.partialFailure(method: "DELETE", path: path) }
+        guard (200...299).contains(response.statusCode) || response.statusCode == 404 else {
+            throw WebDAVError.http(status: response.statusCode, method: "DELETE", path: path)
+        }
+    }
+
+    public func list(_ path: String) async throws -> [RemoteItem] {
+        let body = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/><D:getcontentlength/></D:prop></D:propfind>
+        """
+        let (data, response) = try await send("PROPFIND", path: path, isDirectory: true, headers: ["Depth": "1"], body: Data(body.utf8))
+        guard response.statusCode == 207 else {
+            throw WebDAVError.http(status: response.statusCode, method: "PROPFIND", path: path)
+        }
+        let selfPath = url(for: path, isDirectory: true).path
+        return WebDAVListingParser.parse(data).compactMap { entry in
+            let decoded = (URL(string: entry.href)?.path ?? entry.href.removingPercentEncoding ?? entry.href)
+            if decoded.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == selfPath.trimmingCharacters(in: CharacterSet(charactersIn: "/")) {
+                return nil
+            }
+            let name = (decoded as NSString).lastPathComponent
+            guard !name.isEmpty, name != "/" else { return nil }
+            return RemoteItem(name: name, isDirectory: entry.isCollection, size: entry.length)
+        }
+    }
+
+    public func readPrefix(_ path: String, maxBytes: Int) async throws -> Data {
+        var request = makeRequest("GET", path: path, isDirectory: false)
+        request.setValue("bytes=0-\(max(0, maxBytes - 1))", forHTTPHeaderField: "Range")
+        let result: (Data, URLResponse)
+        do {
+            result = try await session.data(for: request)
+        } catch {
+            throw mapError(error)
+        }
+        let (data, response) = result
+        guard let http = response as? HTTPURLResponse else { throw WebDAVError.invalidResponse }
+        if http.statusCode == 401 { throw WebDAVError.authenticationFailed }
+        guard http.statusCode == 200 || http.statusCode == 206 else {
+            throw WebDAVError.http(status: http.statusCode, method: "GET", path: path)
+        }
+        return data.count > maxBytes ? data.prefix(maxBytes) : data
+    }
+
+    public func moveFile(_ source: String, to destination: String) async throws {
+        let target = url(for: destination, isDirectory: false)
+        let (_, response) = try await send(
+            "MOVE", path: source, isDirectory: false,
+            headers: ["Destination": target.absoluteString, "Overwrite": "F"], body: nil
+        )
+        switch response.statusCode {
+        case 201, 204: return
+        case 207: throw WebDAVError.partialFailure(method: "MOVE", path: source)
+        case 412: throw DestinationError.alreadyExists(destination)
+        default: throw WebDAVError.http(status: response.statusCode, method: "MOVE", path: source)
+        }
+    }
+
+    public func removeDirectory(_ path: String) async throws {
+        guard !path.split(separator: "/").isEmpty else { return } // never delete the root
+        let (_, response) = try await send("DELETE", path: path, isDirectory: true, headers: [:], body: nil)
+        if response.statusCode == 207 { throw WebDAVError.partialFailure(method: "DELETE", path: path) }
         guard (200...299).contains(response.statusCode) || response.statusCode == 404 else {
             throw WebDAVError.http(status: response.statusCode, method: "DELETE", path: path)
         }
@@ -166,6 +234,10 @@ public final class WebDAVDestination: ArchiveDestination, @unchecked Sendable {
     private func send(_ method: String, path: String, isDirectory: Bool, headers: [String: String], body: Data?) async throws -> (Data, HTTPURLResponse) {
         var request = makeRequest(method, path: path, isDirectory: isDirectory)
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+        if method == "DELETE" || method == "MOVE" {
+            // Deleting/moving folders with thousands of images can take minutes on a NAS.
+            request.timeoutInterval = 900
+        }
         if let body {
             request.httpBody = body
             request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
@@ -297,6 +369,52 @@ enum WebDAVQuotaParser {
             if elementName == "quota-available-bytes", available == nil { available = value }
             if elementName == "quota-used-bytes", used == nil { used = value }
             current = nil
+            text = ""
+        }
+    }
+}
+
+// MARK: - PROPFIND Depth 1 listing
+
+enum WebDAVListingParser {
+    struct Entry { var href: String; var isCollection: Bool; var length: Int64 }
+
+    static func parse(_ data: Data) -> [Entry] {
+        let delegate = Delegate()
+        let parser = XMLParser(data: data)
+        parser.shouldProcessNamespaces = true
+        parser.delegate = delegate
+        parser.parse()
+        return delegate.entries
+    }
+
+    private final class Delegate: NSObject, XMLParserDelegate {
+        var entries: [Entry] = []
+        private var current: Entry?
+        private var text = ""
+
+        func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
+                    qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+            text = ""
+            switch elementName {
+            case "response": current = Entry(href: "", isCollection: false, length: 0)
+            case "collection": current?.isCollection = true
+            default: break
+            }
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) { text += string }
+
+        func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch elementName {
+            case "href": if current?.href.isEmpty == true { current?.href = value }
+            case "getcontentlength": current?.length = Int64(value) ?? 0
+            case "response":
+                if let current, !current.href.isEmpty { entries.append(current) }
+                current = nil
+            default: break
+            }
             text = ""
         }
     }

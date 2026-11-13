@@ -36,6 +36,18 @@ enum DestinationKind: String, CaseIterable, Identifiable {
     }
 }
 
+/// Keeps long-running work at full speed while the app is in the background
+/// (no App Nap throttling) and prevents idle system sleep until it is finished.
+enum BackgroundActivity {
+    static func begin(_ reason: String) -> NSObjectProtocol {
+        ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: reason)
+    }
+
+    static func end(_ token: NSObjectProtocol) {
+        ProcessInfo.processInfo.endActivity(token)
+    }
+}
+
 enum Format {
     static func bytes(_ value: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
