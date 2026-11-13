@@ -9,6 +9,8 @@ enum SettingsKey {
     static let autoScanMedia = "autoScanMedia"
     static let ejectAfterImport = "ejectAfterImport"
     static let capitalizeNames = "capitalizeNames"
+    /// Pseudo key (the password lives in the keychain); used to mark it as managed by the config file.
+    static let webDAVPassword = "webDAVPassword"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [

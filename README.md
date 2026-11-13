@@ -73,6 +73,22 @@ Eine ad-hoc-signierte App muss beim ersten Start per Rechtsklick → „Öffnen�
 
 Alternativ ein lokaler Ordner oder eine im Finder verbundene Freigabe. Ist sie nicht verbunden, bleiben die Daten in der Warteschlange.
 
+### Konfigurationsdatei (Voreinstellungen)
+
+Die Archiv-Einstellungen können per Datei vorgegeben werden, praktisch für mehrere Arbeitsplätze:
+
+- `~/.dicom-importer` (pro Benutzer) und/oder
+- `/Library/Application Support/DICOM-Importer/dicom-importer.conf` (für alle Benutzer; die Benutzerdatei hat Vorrang)
+
+Vorlage: [`dicom-importer.example.conf`](dicom-importer.example.conf). Die Datei wird beim Start gelesen (oder über *Einstellungen → Neu laden*). Dort gesetzte Werte sind in den Einstellungen gesperrt. Ein optionales `password` wird in den Schlüsselbund übernommen; die Datei sollte dann `chmod 600` haben. `destination_path` aus der alten Python-Konfiguration wird weiterhin verstanden.
+
+```ini
+[archive]
+type = webdav
+url = https://192.168.2.40:5001/Dicom
+user = team
+```
+
 ### Lokale Daten
 
 Warteschlange und zwischengespeicherte Untersuchungen liegen unter

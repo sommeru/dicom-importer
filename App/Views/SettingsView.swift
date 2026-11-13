@@ -29,22 +29,30 @@ private struct DestinationSettingsView: View {
 
     var body: some View {
         Form {
+            ConfigFileSection()
+
             Picker("Ziel", selection: $kind) {
                 ForEach(DestinationKind.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.radioGroup)
+            .disabled(isManaged(SettingsKey.destinationKind))
 
             switch kind {
             case .webDAV:
                 Section {
                     TextField("Adresse", text: $webDAVURL, prompt: Text("https://nas.local:5006/DICOM"))
+                        .disabled(isManaged(SettingsKey.webDAVURL))
                     TextField("Benutzer", text: $webDAVUser)
+                        .disabled(isManaged(SettingsKey.webDAVUser))
                     SecureField("Passwort", text: $password)
+                        .disabled(isManaged(SettingsKey.webDAVPassword))
                     if !fingerprint.isEmpty {
                         LabeledContent("Vertrautes Zertifikat") {
                             HStack {
                                 Text(String(fingerprint.prefix(23)) + "…").font(.caption.monospaced())
-                                Button("Vergessen") { fingerprint = "" }.controlSize(.small)
+                                Button("Vergessen") { fingerprint = "" }
+                                    .controlSize(.small)
+                                    .disabled(isManaged(SettingsKey.webDAVFingerprint))
                             }
                         }
                     }
@@ -62,6 +70,7 @@ private struct DestinationSettingsView: View {
                                 .truncationMode(.middle)
                                 .foregroundStyle(folderPath.isEmpty ? .secondary : .primary)
                             Button("Wählen …") { chooseFolder() }
+                                .disabled(isManaged(SettingsKey.folderPath))
                         }
                     }
                 } footer: {
@@ -104,6 +113,8 @@ private struct DestinationSettingsView: View {
         .onChange(of: password) { Keychain.setPassword(password, account: webDAVUser) }
     }
 
+    private func isManaged(_ key: String) -> Bool { model.managedSettings.contains(key) }
+
     private func chooseFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -138,15 +149,20 @@ private struct DestinationSettingsView: View {
 }
 
 private struct GeneralSettingsView: View {
+    @Environment(AppModel.self) private var model
     @AppStorage(SettingsKey.autoScanMedia) private var autoScan = true
     @AppStorage(SettingsKey.ejectAfterImport) private var eject = true
     @AppStorage(SettingsKey.capitalizeNames) private var capitalize = false
 
     var body: some View {
         Form {
+            ConfigFileSection()
             Toggle("Eingelegte DICOM-CDs automatisch einlesen", isOn: $autoScan)
+                .disabled(model.managedSettings.contains(SettingsKey.autoScanMedia))
             Toggle("CD nach dem Sichern automatisch auswerfen", isOn: $eject)
+                .disabled(model.managedSettings.contains(SettingsKey.ejectAfterImport))
             Toggle("Namen in GROSSBUCHSTABEN umwandeln (MUSTERMANN → Mustermann)", isOn: $capitalize)
+                .disabled(model.managedSettings.contains(SettingsKey.capitalizeNames))
             LabeledContent("Lokaler Zwischenspeicher") {
                 Button("Im Finder zeigen") {
                     NSWorkspace.shared.activateFileViewerSelecting([AppModel.supportDirectory])
@@ -154,5 +170,40 @@ private struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Shows which configuration file presets the settings, plus parse warnings.
+private struct ConfigFileSection: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if !model.configFiles.isEmpty || !model.configWarnings.isEmpty {
+            Section {
+                ForEach(model.configFiles, id: \.self) { url in
+                    Label {
+                        Text("Voreinstellungen aus \(url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))")
+                    } icon: {
+                        Image(systemName: "lock.doc")
+                    }
+                }
+                if !model.configFiles.isEmpty {
+                    Text("Gesperrte Felder werden durch die Datei vorgegeben und können nur dort geändert werden.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.configWarnings, id: \.self) { warning in
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                HStack {
+                    Button("Neu laden") { model.reloadConfigFile() }
+                    if let url = model.configFiles.last {
+                        Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    }
+                }
+            }
+        }
     }
 }

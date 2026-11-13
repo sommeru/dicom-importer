@@ -102,6 +102,11 @@ final class AppModel {
     // Transfer queue
     private(set) var jobs: [TransferJob] = []
     private(set) var destinationHealth: DestinationHealth = .unknown
+
+    // Presets from the configuration file(s)
+    private(set) var configFiles: [URL] = []
+    private(set) var managedSettings: Set<String> = []
+    private(set) var configWarnings: [String] = []
     var pendingJobCount: Int { jobs.filter { $0.state != .completed }.count }
 
     let queue: TransferQueue
@@ -121,6 +126,7 @@ final class AppModel {
     init() {
         SettingsKey.registerDefaults()
         queue = TransferQueue(directory: Self.supportDirectory.appendingPathComponent("Outbox", isDirectory: true))
+        loadConfigFile()
         // Portal downloads contain patient data and are only kept until they are staged.
         try? FileManager.default.removeItem(at: Self.downloadsDirectory)
 
@@ -138,6 +144,70 @@ final class AppModel {
             Task { @MainActor in self?.kickQueue() }
         }
         pathMonitor.start(queue: .global(qos: .utility))
+    }
+
+    // MARK: - Configuration file
+
+    /// System-wide file first, the user's file overrides it.
+    static var configURLs: [URL] {
+        [
+            URL(fileURLWithPath: "/Library/Application Support/DICOM-Importer/dicom-importer.conf"),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".dicom-importer"),
+        ]
+    }
+
+    /// Applies presets from the configuration file(s) to the settings. Settings defined
+    /// there are locked in the settings window.
+    func loadConfigFile() {
+        let (config, loaded) = ImporterConfig.load(from: Self.configURLs)
+        let defaults = UserDefaults.standard
+        var managed = Set<String>()
+        var warnings = config.warnings
+
+        func preset(_ value: Any?, _ key: String) {
+            guard let value else { return }
+            defaults.set(value, forKey: key)
+            managed.insert(key)
+        }
+        preset(config.archiveType.map { $0 == .webDAV ? DestinationKind.webDAV.rawValue : DestinationKind.folder.rawValue },
+               SettingsKey.destinationKind)
+        preset(config.webDAVURL, SettingsKey.webDAVURL)
+        preset(config.webDAVUser, SettingsKey.webDAVUser)
+        preset(config.certificateSHA256.map(CertificateFingerprint.normalize), SettingsKey.webDAVFingerprint)
+        preset(config.folderPath, SettingsKey.folderPath)
+        preset(config.autoScanMedia, SettingsKey.autoScanMedia)
+        preset(config.ejectAfterImport, SettingsKey.ejectAfterImport)
+        preset(config.capitalizeNames, SettingsKey.capitalizeNames)
+
+        if let password = config.webDAVPassword {
+            let user = defaults.string(forKey: SettingsKey.webDAVUser) ?? ""
+            if user.isEmpty {
+                warnings.append("Passwort in der Konfiguration ohne Benutzer (user = …) wird ignoriert.")
+            } else {
+                if Keychain.password(account: user) != password {
+                    Keychain.setPassword(password, account: user)
+                }
+                managed.insert(SettingsKey.webDAVPassword)
+            }
+            // A plain-text password should only be readable by the owner.
+            for url in loaded {
+                let permissions = (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int) ?? 0
+                if permissions & 0o077 != 0, (try? String(contentsOf: url, encoding: .utf8))?.contains("password") == true {
+                    warnings.append("\(url.path) enthält ein Passwort und ist für andere lesbar – empfohlen: chmod 600 \(url.path)")
+                }
+            }
+        }
+
+        configFiles = loaded
+        managedSettings = managed
+        configWarnings = warnings
+        for url in loaded { appLog.info("Loaded configuration \(url.path, privacy: .public)") }
+        for warning in warnings { appLog.warning("Config: \(warning, privacy: .public)") }
+    }
+
+    func reloadConfigFile() {
+        loadConfigFile()
+        kickQueue()
     }
 
     // MARK: - Opening sources
