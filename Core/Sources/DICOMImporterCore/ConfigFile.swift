@@ -7,7 +7,7 @@ import Foundation
 /// type = webdav                      ; webdav | folder
 /// url = https://192.168.2.40:5001/Dicom
 /// user = team
-/// password = geheim                  ; optional, wird in den Schlüsselbund übernommen
+/// password = geheim                  ; optional, wird direkt verwendet (statt Schlüsselbund)
 /// certificate_sha256 = AB:CD:…       ; optional, selbstsigniertes Zertifikat
 /// folder = /Volumes/Dicom            ; nur bei type = folder
 ///

@@ -104,7 +104,7 @@ Die Archiv-Einstellungen können per Datei vorgegeben werden, praktisch für meh
 - `~/.dicom-importer` (pro Benutzer) und/oder
 - `/Library/Application Support/DICOM-Importer/dicom-importer.conf` (für alle Benutzer; die Benutzerdatei hat Vorrang)
 
-Vorlage: [`dicom-importer.example.conf`](dicom-importer.example.conf). Die Datei wird beim Start gelesen (oder über *Einstellungen → Neu laden*). Dort gesetzte Werte sind in den Einstellungen gesperrt. Ein optionales `password` wird in den Schlüsselbund übernommen; die Datei sollte dann `chmod 600` haben. `destination_path` aus der alten Python-Konfiguration wird weiterhin verstanden.
+Vorlage: [`dicom-importer.example.conf`](dicom-importer.example.conf). Die Datei wird beim Start gelesen (oder über *Einstellungen → Neu laden*). Dort gesetzte Werte sind in den Einstellungen gesperrt. Ein optionales `password` wird direkt verwendet (ohne Schlüsselbund, also ohne Systemabfrage beim Start); die Datei sollte dann `chmod 600` haben. Ohne `password` liegt das Passwort im Schlüsselbund. `destination_path` aus der alten Python-Konfiguration wird weiterhin verstanden.
 
 ```ini
 [archive]

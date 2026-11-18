@@ -108,6 +108,10 @@ final class AppModel {
     private(set) var configFiles: [URL] = []
     private(set) var managedSettings: Set<String> = []
     private(set) var configWarnings: [String] = []
+    /// Password from the configuration file; used directly, the keychain is not touched.
+    private var configPassword: String?
+    /// Keychain is read at most once per user and run (every access may show a system prompt).
+    private var passwordCache: [String: String] = [:]
     var pendingJobCount: Int { jobs.filter { $0.state != .completed }.count }
 
     let queue: TransferQueue
@@ -181,14 +185,13 @@ final class AppModel {
         preset(config.ejectAfterImport, SettingsKey.ejectAfterImport)
         preset(config.capitalizeNames, SettingsKey.capitalizeNames)
 
+        configPassword = nil
         if let password = config.webDAVPassword {
             let user = defaults.string(forKey: SettingsKey.webDAVUser) ?? ""
             if user.isEmpty {
                 warnings.append("Passwort in der Konfiguration ohne Benutzer (user = …) wird ignoriert.")
             } else {
-                if Keychain.password(account: user) != password {
-                    Keychain.setPassword(password, account: user)
-                }
+                configPassword = password
                 managed.insert(SettingsKey.webDAVPassword)
             }
             // A plain-text password should only be readable by the owner.
@@ -482,7 +485,7 @@ final class AppModel {
             return WebDAVDestination(configuration: WebDAVConfiguration(
                 baseURL: url,
                 username: user,
-                password: Keychain.password(account: user) ?? "",
+                password: webDAVPassword(for: user),
                 pinnedCertificateSHA256: fingerprint
             ))
         case .folder:
@@ -490,6 +493,25 @@ final class AppModel {
             return LocalFolderDestination(root: URL(fileURLWithPath: path, isDirectory: true))
         }
     }
+
+    /// Password from the configuration file, otherwise from the keychain (read once and cached).
+    func webDAVPassword(for user: String) -> String {
+        if let configPassword { return configPassword }
+        guard !user.isEmpty else { return "" }
+        if let cached = passwordCache[user] { return cached }
+        let password = Keychain.password(account: user) ?? ""
+        passwordCache[user] = password
+        return password
+    }
+
+    /// Called by the settings window; writes the keychain only if the value really changed.
+    func setWebDAVPassword(_ password: String, for user: String) {
+        guard !user.isEmpty, configPassword == nil, webDAVPassword(for: user) != password else { return }
+        Keychain.setPassword(password, account: user)
+        passwordCache[user] = password
+    }
+
+    var passwordFromConfigFile: Bool { configPassword != nil }
 
     func kickQueue() {
         Task { await processQueue() }
