@@ -59,6 +59,10 @@ xattr -dr com.apple.quarantine /Applications/DICOM-Importer.app
 
 Beim ersten Zugriff fragt macOS nach der Erlaubnis für das **lokale Netzwerk** (für das NAS) und ggf. die **Kamera** (QR-Code) – beides erlauben.
 
+### Verteilung per MDM (Mosyle)
+
+[`deploy/mosyle-install.sh`](deploy/mosyle-install.sh) als *Custom Command* (als root, z. B. täglich) hinterlegen. Das Skript installiert bzw. aktualisiert die App aus dem neuesten GitHub-Release (nicht, solange die App läuft) und schreibt die systemweite Konfiguration nach `/Library/Application Support/DICOM-Importer/dicom-importer.conf`. Per Skript installierte Apps sind nicht in Quarantäne – `xattr` ist dann nicht nötig. Kamera und lokales Netzwerk muss jeder Benutzer einmal erlauben.
+
 ## Bauen
 
 Voraussetzungen: Xcode 16+, [XcodeGen](https://github.com/yonaskolb/XcodeGen).
