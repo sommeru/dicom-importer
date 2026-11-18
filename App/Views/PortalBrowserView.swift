@@ -11,13 +11,25 @@ struct PortalBrowserView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @StateObject private var browser = PortalBrowser()
+    @State private var showLog = false
 
     var body: some View {
         VStack(spacing: 0) {
+            if browser.hasPopup {
+                HStack {
+                    Image(systemName: "macwindow.on.rectangle")
+                    Text("Vom Portal geöffnetes Fenster").font(.callout.weight(.medium))
+                    Spacer()
+                    Button("Fenster schließen") { browser.closePopup() }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.accentColor.opacity(0.12))
+            }
             HStack(spacing: 8) {
-                Button { browser.webView.goBack() } label: { Image(systemName: "chevron.left") }
+                Button { browser.activeWebView.goBack() } label: { Image(systemName: "chevron.left") }
                     .disabled(!browser.canGoBack)
-                Button { browser.webView.reload() } label: { Image(systemName: "arrow.clockwise") }
+                Button { browser.activeWebView.reload() } label: { Image(systemName: "arrow.clockwise") }
                 Image(systemName: browser.isSecure ? "lock.fill" : "lock.open.fill")
                     .foregroundStyle(browser.isSecure ? Color.secondary : Color.orange)
                 Text(browser.currentURL?.absoluteString ?? startURL.absoluteString)
@@ -27,12 +39,26 @@ struct PortalBrowserView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if browser.isLoading { ProgressView().controlSize(.small) }
+                Button {
+                    if let url = browser.currentURL { NSWorkspace.shared.open(url) }
+                } label: { Image(systemName: "safari") }
+                .help("Aktuelle Seite in Safari öffnen (zum Vergleich; Anmeldung muss dort neu erfolgen)")
+                Toggle(isOn: $showLog) { Image(systemName: "list.bullet.rectangle") }
+                    .toggleStyle(.button)
+                    .help("Protokoll anzeigen (für die Fehlersuche)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
 
-            WebView(webView: browser.webView)
+            WebView(webView: browser.activeWebView)
+                .id(ObjectIdentifier(browser.activeWebView))
+
+            if showLog {
+                Divider()
+                PortalLogView(entries: browser.log)
+                    .frame(height: 200)
+            }
 
             Divider()
             footer
@@ -48,6 +74,19 @@ struct PortalBrowserView: View {
             browser.beginBackgroundActivity()
         }
         .onDisappear { browser.endBackgroundActivity() }
+        .alert("Externe Anwendung angefordert", isPresented: Binding(
+            get: { browser.externalRequest != nil },
+            set: { if !$0 { browser.externalRequest = nil } }
+        ), presenting: browser.externalRequest) { url in
+            Button("Mit externer App öffnen") { NSWorkspace.shared.open(url) }
+            Button("Adresse kopieren") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: { url in
+            Text("Das Portal möchte den Viewer als eigene Anwendung starten (\(url.scheme ?? "")://…). Das kann der eingebaute Browser nicht. Bitte die Adresse kopieren und mir (bzw. dem Entwickler) schicken – darüber lassen sich die Bilddaten evtl. direkt laden.")
+        }
     }
 
     @ViewBuilder
@@ -93,6 +132,44 @@ struct PortalBrowserView: View {
     }
 }
 
+private struct PortalLogView: View {
+    let entries: [PortalBrowser.LogEntry]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Protokoll (\(entries.count))").font(.caption.weight(.semibold))
+                Spacer()
+                Button("Kopieren") {
+                    let text = entries.map { "\($0.time.formatted(date: .omitted, time: .standard))  \($0.text)" }.joined(separator: "\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            ScrollViewReader { proxy in
+                List(entries) { entry in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(entry.time.formatted(date: .omitted, time: .standard))
+                            .foregroundStyle(.tertiary)
+                        Text(entry.text)
+                            .foregroundStyle(entry.isProblem ? .red : .primary)
+                            .textSelection(.enabled)
+                    }
+                    .font(.caption.monospaced())
+                    .id(entry.id)
+                }
+                .listStyle(.plain)
+                .onChange(of: entries.count) {
+                    if let last = entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+            }
+        }
+    }
+}
+
 private struct WebView: NSViewRepresentable {
     let webView: WKWebView
     func makeNSView(context: Context) -> WKWebView { webView }
@@ -101,6 +178,13 @@ private struct WebView: NSViewRepresentable {
 
 @MainActor
 final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    struct LogEntry: Identifiable {
+        let id = UUID()
+        let time = Date()
+        let text: String
+        let isProblem: Bool
+    }
+
     struct DownloadItem: Identifiable {
         enum State: Equatable { case running, finished, failed(String) }
         let id = UUID()
@@ -130,6 +214,14 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
     @Published private(set) var currentURL: URL?
     @Published private(set) var title = ""
     @Published private(set) var downloads: [DownloadItem] = []
+    @Published private(set) var log: [LogEntry] = []
+    /// Windows opened by the portal (window.open / target=_blank), shown on top of the main page.
+    @Published private(set) var popups: [WKWebView] = []
+    /// A link to a non-web scheme (e.g. weasis://) the portal tried to open.
+    @Published var externalRequest: URL?
+
+    var activeWebView: WKWebView { popups.last ?? webView }
+    var hasPopup: Bool { !popups.isEmpty }
 
     let webView: WKWebView
     /// Per-window folder for downloads; removed once the data is staged or discarded.
@@ -172,36 +264,113 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
         configuration.userContentController.addUserScript(
             WKUserScript(source: alwaysVisible, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
+        // Viewers are often opened with window.open() after an asynchronous step (not a direct
+        // click). WebKit blocks that silently unless explicitly allowed.
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // Debugging: forward JavaScript errors, console errors and window.open calls to the log.
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: Self.debugScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        )
+        let messageProxy = MessageProxy()
+        configuration.userContentController.add(messageProxy, name: "portalLog")
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        observations = [
-            webView.observe(\.isLoading) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
-            webView.observe(\.canGoBack) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
-            webView.observe(\.url) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
-            webView.observe(\.title) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
+        messageProxy.browser = self
+        setUp(webView)
+    }
+
+    /// Delegates, Web Inspector and state observation for the main view and pop-ups.
+    private func setUp(_ view: WKWebView) {
+        view.navigationDelegate = self
+        view.uiDelegate = self
+        // Allows Safari ▸ Entwickler ▸ <Mac> ▸ DICOM-Importer to inspect the page (console, network).
+        view.isInspectable = true
+        observations += [
+            view.observe(\.isLoading) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
+            view.observe(\.canGoBack) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
+            view.observe(\.url) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
+            view.observe(\.title) { [weak self] _, _ in Task { @MainActor in self?.syncState() } },
         ]
     }
+
+    func record(_ text: String, problem: Bool = false) {
+        log.append(LogEntry(text: text, isProblem: problem))
+        if log.count > 1000 { log.removeFirst(log.count - 1000) }
+        if problem { appLog.warning("Portal: \(text, privacy: .private)") }
+    }
+
+    func closePopup() {
+        guard let popup = popups.popLast() else { return }
+        record("Pop-up geschlossen")
+        popup.stopLoading()
+        syncState()
+    }
+
+    private static let debugScript = """
+    (function () {
+      if (window.__dicomImporterDebug) { return; }
+      window.__dicomImporterDebug = true;
+      function send(kind, parts) {
+        try {
+          var text = Array.prototype.map.call(parts, function (a) {
+            if (typeof a === 'string') { return a; }
+            try { return JSON.stringify(a); } catch (e) { return String(a); }
+          }).join(' ');
+          window.webkit.messageHandlers.portalLog.postMessage(kind + ': ' + text.slice(0, 500));
+        } catch (e) {}
+      }
+      var origError = console.error, origWarn = console.warn;
+      console.error = function () { send('console.error', arguments); return origError.apply(console, arguments); };
+      console.warn = function () { send('console.warn', arguments); return origWarn.apply(console, arguments); };
+      window.addEventListener('error', function (e) {
+        send('JS-Fehler', [e.message + ' (' + (e.filename || '') + ':' + (e.lineno || '') + ')']);
+      });
+      window.addEventListener('unhandledrejection', function (e) { send('Promise-Fehler', [String(e.reason)]); });
+      var origOpen = window.open;
+      window.open = function (url, name, features) {
+        send('window.open', [String(url), String(name || ''), String(features || '')]);
+        var result = origOpen.apply(window, arguments);
+        if (!result) { send('window.open', ['→ blockiert/fehlgeschlagen']); }
+        return result;
+      };
+    })();
+    """
 
     func load(_ url: URL) {
         webView.load(URLRequest(url: url))
     }
 
     private func syncState() {
-        isLoading = webView.isLoading
-        canGoBack = webView.canGoBack
-        currentURL = webView.url
-        title = webView.title ?? ""
+        let view = activeWebView
+        isLoading = view.isLoading
+        canGoBack = view.canGoBack
+        currentURL = view.url
+        title = view.title ?? ""
     }
 
     // MARK: WKNavigationDelegate
 
+    private static let webSchemes: Set<String> = ["http", "https", "about", "blob", "data", "javascript"]
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-        navigationAction.shouldPerformDownload ? .download : .allow
+        let url = navigationAction.request.url
+        let scheme = url?.scheme?.lowercased() ?? ""
+        if let url, !scheme.isEmpty, !Self.webSchemes.contains(scheme) {
+            record("Externe Anwendung angefordert: \(url.absoluteString)", problem: true)
+            externalRequest = url
+            return .cancel
+        }
+        if navigationAction.targetFrame?.isMainFrame ?? true {
+            record("Navigation → \(url?.absoluteString ?? "?")\(navigationAction.shouldPerformDownload ? " (Download)" : "")")
+        }
+        return navigationAction.shouldPerformDownload ? .download : .allow
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
+        if let http = navigationResponse.response as? HTTPURLResponse, navigationResponse.isForMainFrame || http.statusCode >= 400 {
+            record("Antwort HTTP \(http.statusCode) \(navigationResponse.response.mimeType ?? "") \(http.url?.absoluteString ?? "")",
+                   problem: http.statusCode >= 400)
+        }
         if !navigationResponse.canShowMIMEType { return .download }
         if let http = navigationResponse.response as? HTTPURLResponse,
            let disposition = http.value(forHTTPHeaderField: "Content-Disposition"),
@@ -223,15 +392,51 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
         download.delegate = self
     }
 
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        record("Geladen: \(webView.url?.absoluteString ?? "?")")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        logNavigationError(error, webView: webView)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        logNavigationError(error, webView: webView)
+    }
+
+    private func logNavigationError(_ error: Error, webView: WKWebView) {
+        let nsError = error as NSError
+        // -999 = cancelled (e.g. replaced by a new navigation or turned into a download), 102 = frame load interrupted by download
+        if nsError.code == NSURLErrorCancelled || (nsError.domain == "WebKitErrorDomain" && nsError.code == 102) { return }
+        let failing = (nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String) ?? webView.url?.absoluteString ?? "?"
+        record("Ladefehler \(nsError.domain) \(nsError.code): \(nsError.localizedDescription) – \(failing)", problem: true)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        record("Webseiten-Prozess abgestürzt (zu wenig Speicher / Viewer zu groß?) – lade neu", problem: true)
+        webView.reload()
+    }
+
     // MARK: WKUIDelegate
 
-    /// Links with target="_blank" open in the same view.
+    /// window.open / target="_blank": shown as pop-up on top of the main page. The pop-up keeps
+    /// its connection to the opening page (window.opener), which many viewers need.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if navigationAction.targetFrame == nil {
-            webView.load(navigationAction.request)
+        record("Neues Fenster angefordert: \(navigationAction.request.url?.absoluteString ?? "(leer)")")
+        let popup = WKWebView(frame: .zero, configuration: configuration)
+        setUp(popup)
+        popups.append(popup)
+        syncState()
+        return popup
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        if let index = popups.firstIndex(of: webView) {
+            popups.remove(at: index)
+            record("Pop-up hat sich selbst geschlossen")
+            syncState()
         }
-        return nil
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
@@ -260,6 +465,7 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
         }
         let filename = ArchiveNaming.sanitize(suggestedFilename.isEmpty ? "download" : suggestedFilename)
         let file = directory.appendingPathComponent(filename)
+        record("Download: \(filename) (\(response.mimeType ?? "?"), \(response.expectedContentLength > 0 ? Format.bytes(response.expectedContentLength) : "Größe unbekannt"))")
         let item = DownloadItem(filename: filename, progress: download.progress)
         downloads.append(item)
         pending[ObjectIdentifier(download)] = (item.id, file)
@@ -275,11 +481,25 @@ final class PortalBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         guard let entry = pending.removeValue(forKey: ObjectIdentifier(download)) else { return }
         setState(.failed(error.localizedDescription), for: entry.id)
+        record("Download fehlgeschlagen: \(error.localizedDescription)", problem: true)
     }
 
     private func setState(_ state: DownloadItem.State, for id: UUID) {
         if let index = downloads.firstIndex(where: { $0.id == id }) {
             downloads[index].state = state
         }
+    }
+}
+
+/// Receives messages from the debug script without creating a retain cycle
+/// (WKUserContentController keeps its handlers strongly).
+@MainActor
+private final class MessageProxy: NSObject, WKScriptMessageHandler {
+    weak var browser: PortalBrowser?
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let text = message.body as? String else { return }
+        let problem = !text.hasPrefix("window.open:") || text.contains("blockiert")
+        browser?.record("JS \(text)", problem: problem)
     }
 }

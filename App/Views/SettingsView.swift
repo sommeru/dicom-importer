@@ -44,7 +44,8 @@ private struct DestinationSettingsView: View {
                         .disabled(isManaged(SettingsKey.webDAVURL))
                     TextField("Benutzer", text: $webDAVUser)
                         .disabled(isManaged(SettingsKey.webDAVUser))
-                    SecureField("Passwort", text: $password)
+                    SecureField("Passwort", text: $password,
+                                prompt: Text(model.passwordFromConfigFile ? "aus Konfigurationsdatei" : ""))
                         .disabled(isManaged(SettingsKey.webDAVPassword))
                     if !fingerprint.isEmpty {
                         LabeledContent("Vertrautes Zertifikat") {
@@ -57,7 +58,7 @@ private struct DestinationSettingsView: View {
                         }
                     }
                 } footer: {
-                    Text("Synology: Paket „WebDAV Server“ installieren, HTTPS-Port ist standardmäßig 5006. Der Ordner muss bereits existieren und für den Benutzer beschreibbar sein. Das Passwort wird im macOS-Schlüsselbund gespeichert.")
+                    Text("Synology: Paket „WebDAV Server“ installieren, HTTPS-Port ist standardmäßig 5006. Der Ordner muss bereits existieren und für den Benutzer beschreibbar sein. Das Passwort wird im macOS-Schlüsselbund gespeichert, sofern es nicht in der Konfigurationsdatei steht.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -108,12 +109,19 @@ private struct DestinationSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { password = Keychain.password(account: webDAVUser) ?? "" }
-        .onChange(of: webDAVUser) { password = Keychain.password(account: webDAVUser) ?? "" }
-        .onChange(of: password) { Keychain.setPassword(password, account: webDAVUser) }
+        .onAppear { loadPassword() }
+        .onChange(of: webDAVUser) { loadPassword() }
+        .onChange(of: password) {
+            if !model.passwordFromConfigFile { model.setWebDAVPassword(password, for: webDAVUser) }
+        }
     }
 
     private func isManaged(_ key: String) -> Bool { model.managedSettings.contains(key) }
+
+    private func loadPassword() {
+        // Never show the password from the config file; otherwise the cached keychain value.
+        password = model.passwordFromConfigFile ? "" : model.webDAVPassword(for: webDAVUser)
+    }
 
     private func chooseFolder() {
         let panel = NSOpenPanel()
